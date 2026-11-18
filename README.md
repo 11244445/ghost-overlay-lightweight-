@@ -3,15 +3,35 @@
 An ultra-light gaming overlay and instant-replay clipper for Windows 11. It works like Xbox Game Bar, uses a small
 fraction of the RAM and CPU, and never knocks you out of a borderless fullscreen game.
 
+* **About 7 MB to download** (exe + DLLs), **~10 MB and 0 % CPU when you aren't gaming**, and **~10-16 MB in Task
+  Manager while it records a game**.
+* Instant replay, screenshots, per-app audio, Discord-sized exports, Spotify controls, web tabs, any app inside the overlay.
+* No hooks, no injection, no game memory access: safe with Vanguard, EAC and BattlEye.
+
 ## Quick start
 
 1. Download `GhostBar-win64.zip` from the **Releases** page (or the latest **Actions** build artifact).
 2. Unzip anywhere and run `GhostBar.exe`. A ghost icon appears in the tray.
-3. Press **Win+J** in a game (Borderless / Windowed Fullscreen) to open the overlay, and **Alt+F10** to save the last
-   60 seconds.
+3. Press **Win+J** in a game (Borderless / Windowed Fullscreen) to open the overlay, **Alt+F10** to save the last
+   30 seconds, and **Alt+F11** for a screenshot.
 
-Requirements: Windows 11 (or Windows 10 22H2), an NVIDIA, AMD or Intel GPU with a hardware video encoder, and the
-WebView2 Runtime (preinstalled on Windows 11) for web tabs.
+The replay buffer starts by itself when a game starts and stops when it closes (see "Lightweight by design").
+
+Requirements: Windows 11 (or Windows 10 22H2), an NVIDIA, AMD or Intel GPU with a hardware video encoder, the
+Microsoft Visual C++ Redistributable (already installed on virtually every gaming PC) and the WebView2 Runtime
+(preinstalled on Windows 11) for web tabs.
+
+## Lightweight by design
+
+| What | How |
+|---|---|
+| **Nothing runs when you aren't gaming** | The replay buffer is *auto-start with games* by default. It starts when a game from your list (25 popular titles) runs, or when any borderless/fullscreen non-browser app comes to the front (auto-detect), and stops when that process exits. Otherwise GhostBar is a ~10 MB tray icon with no timers, no polling and 0 % CPU. |
+| **Small number in Task Manager** | The working set is trimmed every few seconds while recording and right after the overlay closes. Task Manager's *Memory* column stays around **7-16 MB** while recording (the encoded buffer itself is "standby" memory that Windows reclaims on demand). |
+| **One dropdown for the cost** | *Profile*: **Lightest** (720p30, ~10 MB buffer), **Light** (1080p60 10 Mbps, ~40 MB, default), **Balanced**, **Quality**. The estimate is shown next to the setting. |
+| **Overlay costs nothing when closed** | GPU device, swap chain, fonts, bitmaps, thumbnails, PDH counters and the mic meter thread are all released on close; the first frame is drawn before the window appears. |
+| **Slim FFmpeg** | An overlay vcpkg port builds FFmpeg with only the codecs GhostBar uses (hardware H.264/HEVC/AV1 encoders, AAC, MP4/MKV, D3D11 decode): `avcodec` 13.3 → 3.5 MB, `avformat` 2.1 → 0.8 MB. |
+| **Efficient threads** | The audio threads wake 25x/s instead of 100x/s; capture/encode threads opt out of EcoQoS, everything else opts in while hidden. |
+| **Web tabs on a diet** | Hidden tabs are suspended and set to low memory; *Free web memory* can drop them immediately (they reload from the saved URL and scroll position), after 2/10/30 min, or never. |
 
 ## Status
 
@@ -24,6 +44,9 @@ WebView2 Runtime (preinstalled on Windows 11) for web tabs.
 | e. Web tab widget (WebView2, suspend/restore, discard) | **done, built, WebView2 pipeline self-tested** |
 | f. App window widget (DWM thumbnail, bring-to-overlay, experimental embed) | **done, built** |
 | g. Layouts/profiles, per-game switching, pinned HUD, System / Notes / Diagnostics widgets | **done, built** |
+| h. Much lighter (auto-start with games, profiles, memory trim, slim FFmpeg, async overlay open) | **done, measured** |
+| i. New look (5 themes, floating bar, gradients, soft shadows, animations, scroll bars, UI scale, app icon) | **done, rendered and checked** |
+| j. Screenshots, per-app audio, Now playing / Timer / Quick launch widgets, after-save actions | **done, tested** |
 
 ![All widgets, rendered offscreen by `GhostBar.exe --snapshot`](docs-overlay.png)
 
@@ -31,8 +54,16 @@ WebView2 Runtime (preinstalled on Windows 11) for web tabs.
 
 | Scenario | Result |
 |---|---|
-| Idle, overlay hidden, replay buffer off | **10.5 MB private / 16.8 MB working set, 7 threads, 0.000 CPU-s over 10 s** |
-| Replay buffer on, 1080p60 H.264 AMF 25 Mbps, 30 s buffered | 148 MB private (≈94 MB of it is the encoded buffer), ~7 % of one core |
+| Idle (no game), overlay hidden | **~10 MB private, 7 threads, 0.000 CPU-s over 10 s** |
+| **Recording a running game** (Valorant, "Light" profile), Task Manager *Memory* column | **7-16 MB** (sampled every 5 s; before: ~114 MB) |
+| Same, CPU | ~10 % of one core = **0.3 % of this 32-thread PC** |
+| Benchmark `--bench-replay`, working set before → after trim | Lightest 75 → 10 MB, Light 93 → 10 MB, Balanced 106 → 10 MB, Quality 141 → 12 MB |
+| Where the ~143 MB *commit* goes (Light) | 4 MB baseline, +31 MB GPU driver's D3D11 device, +36 MB AMD encoder runtime, +3 MB audio, + the encoded buffer (~38 MB at 30 s). The driver parts are mostly cold after a trim. |
+| Encoded ring buffer, 19 s | Lightest 9 MB, Light 24 MB, Balanced 37 MB, Quality 72 MB |
+| Install size (exe + DLLs) | **7.0 MB** (was 17.4 MB with the full FFmpeg) |
+| Overlay open | GPU device 61 ms; widget setup is now asynchronous (PDH counters, mic meter, clip list) |
+| Per-app audio (powershell.exe playing a 0.04-amplitude tone) | captured peak **0.040**, timeline 8.39 s of audio over 8.50 s |
+| Screenshot (WGC one-shot) | ~100-300 ms, saved as PNG |
 | Save a 15.5 s 4K60 clip (312 MB) from the ring buffer | **296 ms**, no re-encode, valid MP4 (H.264 + AAC 48 kHz stereo) |
 | Save a 20.9 s 1080p60 clip (70 MB) | **58 ms** |
 | Lossless trim 10 s out of a 21 s clip | **78 ms** |
@@ -41,11 +72,12 @@ WebView2 Runtime (preinstalled on Windows 11) for web tabs.
 | Shorts/TikTok 9:16 | 606×1080 crop of a 1080p source (never upscaled), 3.5 s |
 | Timeline thumbnails (10 frames) | ~100 ms |
 | WebView2 tab: create → navigate → scroll capture/restore → Low memory → TrySuspend → Resume | all OK, page loaded in 0.7 s |
-| Idle after all seven steps (overlay hidden, buffer off, no web widget open yet) | **10.6 MB private, 7 threads, 0 CPU** |
+| All exports and the lossless trim re-verified on the slim FFmpeg | Discord 8.1 MB, WhatsApp 13.2 MB, custom 3.5 MB (4 MB target), Shorts 606x1080, 10/10 thumbnails |
 | Compiler warnings (MSVC /W3) | 0 |
 
-The RAM target (< 40 MB idle) refers to the hidden overlay without the replay buffer. The buffer holds encoded packets, so
-its size is set by your bitrate × length. The Clipping widget shows the estimate next to the length slider.
+"Commit" is what the process has reserved; the number in Task Manager is the *active private working set*, which the
+trim keeps small. The buffer holds encoded packets, so its size is set by bitrate × length; the Clipping widget shows
+the estimate next to the profile.
 
 ---
 
@@ -88,6 +120,10 @@ cmake --build --preset release
 
 The output is `build\release\GhostBar.exe`; the FFmpeg DLLs are copied next to it automatically.
 
+The first configure builds FFmpeg from source (about 6 minutes; later builds use the binary cache). `vcpkg-configuration.json`
+points vcpkg at `vcpkg-ports/ffmpeg`, a copy of the stock port with extra `configure` flags that leave out every codec
+GhostBar doesn't use.
+
 > **Long paths:** vcpkg's FFmpeg build fails if the vcpkg install directory path is very long (>260 chars, e.g. deep
 > inside `AppData`). In that case configure with a short install root and build dir:
 > `cmake -S . -B C:\gbbuild -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake -DVCPKG_INSTALLED_DIR=C:\gbdeps`
@@ -110,6 +146,7 @@ The output is `build\release\GhostBar.exe`; the FFmpeg DLLs are copied next to i
 | Close overlay | **Esc** or the toggle again |
 | Save last N seconds | **Alt+F10** (works without opening the overlay) |
 | Start/stop recording | **Alt+F9** |
+| Screenshot (PNG of the game's monitor) | **Alt+F11** |
 | Push-to-mute | not bound (hold-to-mute; set in Settings) |
 
 All hotkeys can be rebound in **Settings**: the gear icon in the overlay's top bar, or **Settings…** in the tray menu,
@@ -122,6 +159,37 @@ when you release the mouse; output options apply instantly.
 
 The tray icon (a ghost in your accent colour) has Open, Replay on/off, Save clip, Record, Settings, folders, Start
 with Windows and Exit.
+
+### Screenshots, after-save actions, per-app audio
+
+* **Screenshot** (Alt+F11, tray menu or `--screenshot`): a one-shot capture through the same official Windows capture API
+  as the replay buffer. It works even when the buffer is off. Files go to `<clips folder>\Screenshots\<Game>\`.
+* **After saving a clip** (Settings → *After saving a clip*): copy the file to the clipboard (paste it straight into
+  Discord), play a confirmation sound (off by default: it would be recorded into the next clip's game audio), and
+  **also make an optimized copy** (Discord 10 MB, Discord 50 MB, WhatsApp, Shorts) in the background on the GPU, at
+  low priority. The shareable copy is what ends up on the clipboard.
+* **Only selected apps on the game-audio track** (Settings → *Clip audio* → *Track 1: only selected apps*): tick
+  e.g. Valorant and Discord and nothing else (music, notifications, browser) lands in your clips. It uses Windows'
+  official process-loopback API (Windows 11 / 10 build 20348+), captures each app *and its child processes*, picks up
+  apps that start later, and falls back to the whole desktop mix if the OS doesn't support it.
+
+### Now playing, Timer, Quick launch
+
+* **Now playing**: title, artist, cover art, progress and previous / play-pause / next for whatever is playing (Spotify,
+  YouTube in a browser, VLC…). It uses the official Windows media-session API and polls once a second only while the
+  widget is shown or pinned.
+* **Timer**: stopwatch with laps, or countdown with 30 s / 1 / 2 / 5 / 10 min presets and a custom `mm:ss` box. It keeps
+  running while the overlay is closed (wall-clock based, it even survives a restart) and beeps + toasts at zero. Pin it
+  to see it on the HUD.
+* **Quick launch**: tiles for the apps (real exe icons) and links you reach for mid-game. **+ App…** opens a file picker,
+  **+ Link** takes a name and URL, the pencil toggles delete badges.
+
+### Themes and interface size
+
+Settings → *Appearance*: **Midnight** (default), **Graphite**, **Light**, **Aurora**, **Ember**, accent colour (swatches or
+hue), panel opacity, corner radius, background dim, and **Interface size** (80-150 %, for 4K screens). The overlay uses a
+floating pill top bar, gradient panels, layered soft shadows, animated hover/toggle/slider states and thin scroll bars;
+the font is *Segoe UI Variable* on Windows 11.
 
 ### Clip editor and "Optimize for…"
 
@@ -188,12 +256,16 @@ them, or while you drag the widget.
 ### Command line (Stream Deck, AutoHotkey, scripts)
 
 ```text
-GhostBar.exe --save-clip | --toggle-overlay | --toggle-recording | --settings | --exit
+GhostBar.exe --save-clip | --toggle-overlay | --toggle-recording | --screenshot | --settings | --exit
 GhostBar.exe --export <file> <discord10|discord50|discord500|whatsapp|twitter|shorts|custom|lossless>
              [--start s] [--end s] [--mb N] [--crop 0..1]
 GhostBar.exe --thumbs <file>          (diagnostic: decode the editor's timeline thumbnails)
 GhostBar.exe --selftest-web           (diagnostic: WebView2 create/navigate/scroll/suspend/resume, hidden window)
-GhostBar.exe --snapshot <out.png>     (diagnostic: render every widget offscreen to a PNG; nothing is shown or saved)
+GhostBar.exe --snapshot <out.png> [midnight|graphite|light|aurora|ember]
+                                      (diagnostic: render every widget offscreen to a PNG; nothing is shown or saved)
+GhostBar.exe --bench-replay <lightest|light|balanced|quality> [seconds] [noaudio] [folder [apps exe1 exe2 ...]]
+                                      (diagnostic: run the replay buffer headlessly and report RAM / CPU / buffer size;
+                                       with a folder it also saves a clip; "apps" tests per-app audio)
 ```
 
 The first group controls the running instance. `--export` runs headlessly and prints the plan and result to the
@@ -261,7 +333,9 @@ src/
   overlay/ui.*             immediate-mode toolkit: buttons, sliders, toggles, dropdowns, layers, pop-ups
   overlay/overlay.*        the overlay window: open/close/focus, top bar, widget frames, drag/resize/snap
   overlay/toast.*          no-activate, capture-excluded notification
-  overlay/widgets/         clip, audio, settings, editor, web, app, system/notes/diagnostics widgets, factory
+  overlay/widgets/         clip, audio, settings, editor, web, app, media (SMTC), timer + launcher, system/notes/diagnostics, factory
+  capture/screenshot.*     one-shot WGC screenshot -> PNG
+  encode/app_audio.*       per-app audio: process-loopback clients mixed on an absolute wall-clock timeline
   web/web_env.*            shared lazily-created WebView2 environment (persistent profile)
   overlay/panel_window.*   standalone window hosting a widget (the Settings window)
   media/media.*            probe, thumbnails, export presets/planning, lossless trim, GPU re-encode
@@ -286,8 +360,8 @@ frame rate.
 * The clip editor previews frames at the In/Out points; it has no video playback (use ▶ to open the clip in your
   player).
 * Exports are H.264 only, for compatibility: every chat app and browser plays it inline.
-* Per-app audio capture (process loopback, e.g. "only Valorant + Discord") is not implemented yet. Track 1 is the full
-  desktop mix.
+* Per-app audio needs Windows 11 / 10 build 20348+; apps that render audio through a different process than the one
+  you picked (some launchers) need that process ticked instead.
 * HDR desktops are captured as SDR (8-bit BGRA).
 * If a game runs **as administrator**, a non-elevated GhostBar's low-level hook can't see keys while that game has focus.
   The `RegisterHotKey` fallback (Alt+Z) and the save-clip combo then only work if you run GhostBar elevated or use the
@@ -304,7 +378,5 @@ frame rate.
 
 ## Possible next steps
 
-* Per-app audio capture via process loopback (`AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`), one client per selected
-  app, mixed into track 1.
 * An HDR capture path (FP16 frame pool → P010 → HEVC/AV1 Main10).
 * A proper installer (MSIX or Inno Setup) that also performs the uiAccess install to Program Files.
